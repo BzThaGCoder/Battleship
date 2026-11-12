@@ -1,0 +1,26 @@
+// SIMS Remote — NullReferenceException fix for DU number on delivery RH
+//
+// Broken:
+//   if (deliveryRH != null && deliveryRH.DELIVERY_DOCUMENT_DU != null)
+//   {
+//       DistributionUnitNumber = deliveryRH.DELIVERY_DOCUMENT_DU.FirstOrDefault().du_no;
+//   }
+//
+// Cause:
+//   DELIVERY_DOCUMENT_DU != null only checks the collection reference.
+//   An empty collection still makes FirstOrDefault() return null, and then
+//   .du_no throws "Object reference not set to an instance of an object".
+//   A null du_no value alone does not throw on assignment.
+//
+// Fixed (inline):
+if (deliveryRH?.DELIVERY_DOCUMENT_DU != null)
+{
+    DistributionUnitNumber = deliveryRH.DELIVERY_DOCUMENT_DU.FirstOrDefault()?.du_no;
+}
+
+// Fixed (explicit):
+// var du = deliveryRH?.DELIVERY_DOCUMENT_DU?.FirstOrDefault();
+// if (du != null)
+// {
+//     DistributionUnitNumber = du.du_no;
+// }
