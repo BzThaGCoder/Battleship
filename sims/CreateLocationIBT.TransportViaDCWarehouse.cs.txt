@@ -1,0 +1,121 @@
+// CreateLocationIBT.aspx.cs — Transport Via DC lock when warehouse is selected
+//
+// Requirement:
+//   When the selected receiving location has LocationType == "W",
+//   set Transport Via DC to "Y" and grey out (disable) the dropdown.
+//   When a non-warehouse is selected (or none), re-enable and default to "N".
+//
+// Apply these changes in Caissa.SIMSCentral.WebClient.IBT.CreateLocationIBT
+
+// ---------------------------------------------------------------------------
+// 1) In LoadReceivingLocations — after building `locations`, cache types in ViewState
+//    so SelectedIndexChanged can detect warehouses without another API round-trip.
+// ---------------------------------------------------------------------------
+
+// ADD after: var locations = locationlite.Where(...).OrderBy(...).ToList();
+
+            ViewState["ReceivingLocationTypes"] = locations.ToDictionary(
+                l => l.LocationId,
+                l => l.LocationType ?? string.Empty);
+
+
+// ---------------------------------------------------------------------------
+// 2) Replace cboReceivingLocation_SelectedIndexChanged with:
+// ---------------------------------------------------------------------------
+
+        protected void cboReceivingLocation_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ApplyTransportViaDCForSelectedLocation();
+
+            if (Convert.ToInt32(cboReceivingLocation.containedDropdownList.SelectedValue) > 0)
+            {
+                ctrlItemScan.ShowNewItemsScan();
+                btnCreate.Enabled = true;
+            }
+            else
+            {
+                ctrlItemScan.HideNewItemsScan();
+            }
+
+            updIBTHeaderInfo.Update();
+        }
+
+
+// ---------------------------------------------------------------------------
+// 3) Add these helpers in #region Methods (near SwitchTransportViaDC / GetReceivingLocation)
+// ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// True when the location currently selected in cboReceivingLocation is a warehouse (LocationType W).
+        /// Uses the type map cached in LoadReceivingLocations; falls back to master data if needed.
+        /// </summary>
+        private bool IsSelectedReceivingLocationWarehouse()
+        {
+            int selectedLocationId;
+            if (!int.TryParse(cboReceivingLocation.containedDropdownList.SelectedValue, out selectedLocationId)
+                || selectedLocationId <= 0)
+            {
+                return false;
+            }
+
+            var typeMap = ViewState["ReceivingLocationTypes"] as Dictionary<int, string>;
+            string locationType;
+            if (typeMap != null && typeMap.TryGetValue(selectedLocationId, out locationType))
+            {
+                return string.Equals(locationType, "W", StringComparison.OrdinalIgnoreCase);
+            }
+
+            // Fallback if ViewState was lost (e.g. unexpected postback path)
+            LocationCriterion criteria = new LocationCriterion { LocationID = selectedLocationId };
+            LOCATION location = SIMSMasterDataController.GetLocations(criteria)?.FirstOrDefault();
+            return location != null
+                && string.Equals(location.LocationType, "W", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Warehouse selected → Transport Via DC = Y and disabled (greyed out).
+        /// Store / cleared selection → enabled again and defaulted to N (page default).
+        /// </summary>
+        private void ApplyTransportViaDCForSelectedLocation()
+        {
+            DropDownList ddlTransportViaDC = cboTransportViaDC.containedDropdownList;
+
+            if (IsSelectedReceivingLocationWarehouse())
+            {
+                ddlTransportViaDC.SelectedValue = "Y";
+                ddlTransportViaDC.Enabled = false;
+            }
+            else
+            {
+                ddlTransportViaDC.Enabled = true;
+                // Restore page default when leaving a warehouse (or no location selected)
+                if (ddlTransportViaDC.Items.FindByValue("N") != null)
+                    ddlTransportViaDC.SelectedValue = "N";
+            }
+
+            ctrlItemScan.TransportViaDC = ddlTransportViaDC.SelectedValue == "Y";
+        }
+
+
+// ---------------------------------------------------------------------------
+// 4) In InsertNewIBT — after reading transportViaDCInd, force Y for warehouse.
+//    Disabled dropdowns do not always post their value; this keeps save correct.
+// ---------------------------------------------------------------------------
+
+                        string transportViaDCInd = cboTransportViaDC.containedDropdownList.SelectedValue;
+                        if (IsSelectedReceivingLocationWarehouse())
+                            transportViaDCInd = "Y";
+                        ibtRequestItem.transport_via_dc_ind = transportViaDCInd;
+
+
+// ---------------------------------------------------------------------------
+// 5) Optional safety in ValidateInput — before reading SelectedIndex / SelectedValue
+//    of cboTransportViaDC, re-apply lock so a warehouse can never submit as N:
+// ---------------------------------------------------------------------------
+
+            ApplyTransportViaDCForSelectedLocation();
+
+            if (cboTransportViaDC.containedDropdownList.SelectedIndex < 1)
+            {
+                // existing warning...
+            }
